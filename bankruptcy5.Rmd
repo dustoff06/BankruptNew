@@ -1,0 +1,574 @@
+---
+title: "Bankruptcy 2"
+author: "Team Finance"
+date: "July 1, 2023"
+output:
+  html_document:
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+# Correlation Function
+
+```{r}
+
+corfunction=function(d){
+  mycorr=cor(d[, 1:ncol(d)]); p.mat=ggcorrplot::cor_pmat(d[,1:ncol(d)])
+  myplot=ggcorrplot(mycorr, hc.order=TRUE,type="lower",
+                    colors=c("red", "white","green"),tl.cex = 8, 
+                    tl.col = "black", lab=TRUE, lab_size=2, p.mat=p.mat,
+                    insig="pch", pch=4)
+  print(myplot)}
+
+```
+
+
+
+# Load Libraries 
+
+```{r}
+######################
+require(Amelia)      #  
+require(dplyr)       #
+require(e1071)       #
+require(kableExtra)  #
+require(magrittr)    #
+require(tidyverse)   #
+require(fpp3)        #
+require(glmm)        #  
+require(MASS)        #
+require(car)         #
+require(elsa)        #
+require(fastDummies) #
+require(ggplot2)     #
+require(ggcorrplot)  #
+require(ggExtra)     #
+require(glmmML)      #
+require(grid)        #
+require(gridExtra)   #
+require(kableExtra)  #
+require(imbalance)   #
+library(leaflet)     #
+library(leaflet.extras)
+require(psych)       #
+require(raster)      #
+require(RColorBrewer)#
+require(rgdal)       #
+require(rgeos)       #
+require(shiny)       #
+require(sf)          #
+require(sp)          #
+require(spatialreg)  #
+require(spData)      #
+require(spdep)       #
+require(tmap)        #
+require(tmaptools)   #
+require(spdep)       #
+require(tidyverse)   #
+require(leaps)       #
+require(caret)       #
+require(glmnet)      #
+require(lmSupport)   #
+require(lars)        #
+require(glmpath)     #
+require(covTest)     #
+gc()
+```
+# Printing / Citation Functions
+
+```{r}
+
+myprint=function(x){x%>%kbl()%>%kable_classic(html_font = "Cambria")}
+mycite=function(x){citation(x)}
+
+```
+
+
+# Set Directory / Load Data / EDA
+
+```{r}
+
+myprint=function(x){x%>%kbl()%>%kable_classic(html_font = "Cambria")}
+mycite=function(x){citation(x)}
+setwd('C:/Users/lfult/Documents/Bankruptcy Study/')
+bankrupt=read.csv('bankruptcy_again.csv', stringsAsFactors = T)
+missmap(bankrupt, x.cex=.5)
+
+```
+
+## Missing by Column
+
+```{r}
+
+myc = function(x){
+  co=rep(0,ncol(bankrupt))
+  for (i in 1:ncol(x)){co[i]=sum(is.na(x[1:nrow(x), i]))}
+  names(co)=colnames(bankrupt)
+  co=sort(co, decreasing=T)/nrow(bankrupt)
+  print(length(co[co>.2]))
+  tmp=co[1:13]
+  barplot(tmp, las=2, cex.names=.5, space=0)
+  print(names(tmp))
+  return(co)
+}
+
+myc(bankrupt)
+
+```
+
+## Missing by Row
+
+```{r}
+
+myr = function (x){
+  temp=rep(0,nrow(x))
+  for (i in 1:nrow(x)){
+    temp[i]=
+    sum(is.na(x[i, 1:ncol(x)]))/ncol(x)}
+  x$ROWMISS=temp
+  x=x[order(-x$ROWMISS), ]
+  return(x)
+}
+
+bankrupt=myr(bankrupt)
+tmp=bankrupt$ROWMISS[1:20]
+names(tmp)=bankrupt$HOSPITAL_NAME[1:20]
+tmp
+  
+```
+
+## Deleted Unreliable Observations that were not bankrupt
+
+Villa Feliciano
+Hospital Universitario Dr Ruiz Arnau 
+Florida State Hospital
+San Juan City Hospital
+Patients Choice Medical Center of Smith County in 2012
+Ascension St Mary Kankakee (FKA AMITA Health St Marys Hospital Kankakee)
+MISH Hospital and Clinics (AKA Institute for Advanced Bariatric Surgery) 
+Ochsner Medical Center - Kenner 
+Rockefeller University Hospital 
+University District Hospital 
+Lindsay Municipal Hospital 
+Hawkins County Memorial Hospital (FKA Wellmont Hawkins County Memorial Hospital) 
+TrustPoint Hospital 
+McLeod Behavioral Health Darlington (FKA Wilson Hospital) 
+Texas Center for Infectious Disease (FKA San Antonio State Chest Hospital) 
+Fayette Medical Center (FKA Weimer Medical Center) 
+Apire Hospital (FKA Aspire Behavioral Health of Conroe) 
+Lonesome Pine
+Jefferson Hospital
+Massachusetts Eye and Ear
+Hackettstown Medical Center
+Hospital Oncologico Andres Grillasca
+
+
+## Impute Missing
+
+```{r}
+
+for(i in 1:ncol(bankrupt)){
+  if(is.numeric(bankrupt[,i])){
+    bankrupt[is.na(bankrupt[,i]), i] <- median(bankrupt[,i], na.rm = TRUE)
+  }
+}
+
+```
+
+
+## Proxies for Altman and Ohlson
+
+```{r}
+
+#Owners' equity, argued by Brad...calculate changes for hospital t-(t-1) for the change in equity
+TA=ifelse(bankrupt$TotalAssets>0,bankrupt$TotalAssets,.01)
+TL=ifelse(bankrupt$TotLiab>0, bankrupt$TotLiab,.01)
+CA=ifelse(bankrupt$CurrentAssets==0, .01, bankrupt$CurrentAssets)
+bankrupt$AltmanX1=(bankrupt$CurrentAssets-bankrupt$CurLiab)/TA#Altman X1 
+bankrupt$AltmanX2=bankrupt$EquityProxy/TA
+bankrupt$AltmanX3=bankrupt$EBITDA/TA
+bankrupt$AltmanX4=bankrupt$EquityProxy/TL
+bankrupt$AltmanZ=6.56*bankrupt$AltmanX1+3.26*bankrupt$AltmanX2+6.72*bankrupt$AltmanX3+1.05*bankrupt$AltmanX4
+
+bankrupt$OhlsonX1=log(TA/696)
+bankrupt$OhlsonX2=bankrupt$TotLiab/TA
+bankrupt$OhlsonX3=(bankrupt$CurrentAssets-bankrupt$CurLiab)/TA
+bankrupt$OhlsonX4=(bankrupt$CurLiab/CA)
+bankrupt$OhlsonX5=ifelse(bankrupt$TotLiab>bankrupt$TotalAssets,1,0)
+bankrupt$OhlsonX6=bankrupt$NetIncome/TA
+bankrupt$OhlsonX7=bankrupt$EBITDA/TL
+bankrupt$OhlsonX8=bankrupt$Loss2Years
+bankrupt$OhlsonX9=bankrupt$NetDelta
+
+#bankrupt$AltmanZ=6.56*bankrupt$AltmanX1+3.26*bankrupt$AltmanX2+6.72*bankrupt$AltmanX3+1.05*bankrupt$AltmanX4
+#bankrupt$OhlsonO=-1.32-0.407*bankrupt$OhlsonX1+6.03*bankrupt$OhlsonX2-1.43*bankrupt$OhlsonX3
+#  +0.0757*bankrupt$OhlsonX4-1.72*bankrupt$OhlsonX5-2.37*bankrupt$OhlsonX6
+#-1.83*bankrupt$OhlsonX7+0.285*bankrupt$OhlsonX8-0.521*bankrupt$OhlsonX9
+
+```
+
+
+## Save Data
+
+```{r}
+
+bankrupt$Loss2years=NULL
+bankrupt$EquityProxy=NULL
+bankrupt$ROWMISS=NULL
+bankrupt$Impute=NULL
+bankrupt$NetDelta=NULL
+write.csv(bankrupt, 'c:/users/lfult/documents/bankruptcy study/cleaned data.csv', row.names=F )
+
+```
+
+## Read Data
+
+```{r}
+
+bankrupt=read.csv('c:/users/lfult/documents/bankruptcy study/cleaned data.csv', stringsAsFactors = T)
+bankrupt$Year=as.numeric(bankrupt$Year)
+
+```
+
+
+# Describe Data
+
+```{r}
+
+
+myprint(describe(bankrupt))
+
+```
+
+# Bankruptcies by State
+
+```{r}
+
+myshape=shapefile("cb_2018_us_state_500k.shp") 
+myshape$M=as.numeric(myshape$STATEFP)
+myf=function(x) mean(x)
+formap=as.data.frame(aggregate(bankrupt$Bankrupt,by=list(bankrupt$GeoCode), FUN=myf))
+colnames(formap)=c('M','Bankrupt')
+formap=sp::merge(myshape,formap, by="M", all.x=F)
+temp=formap
+formap=NULL
+
+```
+
+## Map
+
+```{r}
+
+
+qpal<-colorBin(c("green", "orange", "red"), 0:2/10)
+leaf=leaflet(temp) %>%
+  addTiles(group = "OSM (default)") %>%
+  addMapPane("borders", zIndex = 410) %>%
+  #Base Diagrams
+  addPolylines(data = temp,color = "black",
+               opacity = 1, weight = 1, group="Borders", options = pathOptions(pane="borders"))%>%
+  fitBounds(-124.8, -66.9, 24.4,49.4) %>% setView(-98.6, 39.83, zoom = 4)%>%
+  addPolygons(stroke = FALSE,fillOpacity = 1, smoothFactor = 0.2, 
+              color=~qpal(temp@data$Bankrupt), 
+              popup = paste("State: ", temp@data$NAME, "<br>", 
+                    "Bankruptices: ", temp@data$Bankrupt, "<br>"))%>%
+  addLegend(data=temp, 
+            "bottomright", opacity=1, pal = qpal, 
+            values = ~temp@data$Bankrupt,
+            title = "% Bankruptcies")
+
+leaf
+
+```
+
+
+# Correlations
+
+## Correlations among Income Statement and Balance Sheet
+
+```{r}
+
+myinc=bankrupt[,15:36]
+corfunction(myinc)
+
+```
+## Correlations Among Medicare/Medicaid Variables
+
+```{r}
+
+mymed=bankrupt[,37:40]
+corfunction(mymed)
+
+
+```
+## Correlation among Financial Ratios
+
+```{r}
+
+myrat=bankrupt[,41:51]
+corfunction(myrat)
+
+```
+
+
+
+
+## Correlations Among Technical Variables
+
+```{r}
+
+mytech=bankrupt[,52:62]
+corfunction(mytech)
+
+```
+## Correlations Among Quality Variables
+
+```{r}
+
+myq=bankrupt[,63:66]
+corfunction(myq)
+
+```
+## Correlations Among Altman 
+
+```{r}
+
+myscores=bankrupt[,67:70]
+corfunction(myscores)
+
+
+```
+## Correlations among Ohlson
+
+```{r}
+
+myscores=bankrupt[,71:78]
+corfunction(myscores)
+
+
+```
+
+
+## Correlations among GLMData
+
+```{r}
+
+corfunction(glmdata)
+glmdata$o1=NULL #perfectly correlated with a1
+
+```
+
+
+## Column Names
+
+```{r}
+
+colnames(bankrupt)
+
+
+```
+# Train Test Split
+
+```{r}
+
+
+  set.seed(1234)
+  mys=sample(unique(bankrupt$HospID), 2237, replace=F)
+  test=bankrupt[!bankrupt$HospID %in% mys,]
+  train=bankrupt[bankrupt$HospID %in% mys,]
+  length(unique(train$HospID[train$Bankrupt==1]))
+  length(unique(test$HospID[test$Bankrupt==1]))
+  train=train[,-c(1:11)]
+  test=test[,-c(1:11)]
+  
+
+
+
+```
+
+
+# Scale
+
+Some methods are not scale invariant.
+
+```{r}
+
+for (i in 3:ncol(train)){
+  ma=max(train[,i])
+  mi=min(train[,i])
+  train[,i]=(train[,i]-mi)/(ma-mi)
+  test[,i]=(test[,i]-mi)/(ma-mi)
+}
+
+describe(train)
+
+write.csv(train,'originaltrain.csv',row.names = F)
+write.csv(test,'originaltest.csv', row.names=F)
+
+```
+
+
+
+# Oversample
+
+We have highly imbalanced data. To improve classification we oversample the positive cases of bankruptcy using majority weighted oversampline. 
+
+```{r}
+
+tmp=mwmote(train, numInstances = 5000, classAttr="Bankrupt")
+tmp$Bankrupt=round(tmp$Bankrupt,0)
+train=rbind(train,tmp)
+table(train$Bankrupt)
+write.csv(train, 'oversampled.csv', row.names = F)
+write.csv(test, 'testset.csv', row.names=F)
+gc()
+
+```
+# Read
+
+```{r}
+
+train=read.csv('oversampled.csv', stringsAsFactors = T)
+test=read.csv('testset.csv', stringsAsFactors = T)
+
+
+```
+
+
+# Confusion Matrix Function
+
+This function is useful for some of the models. Others are done manually.
+
+```{r}
+
+mycm=function(model){
+  tmp=round(predict(model,test, type='response'),0)
+  tmp[tmp>1]=1
+  return(confusionMatrix(as.factor(tmp), as.factor(test$Bankrupt), positive='1'))}
+
+```
+
+
+# Models
+
+## Prep
+
+```{r}
+
+
+
+train1=train[,-2]
+test1=test[,-2]
+train2=train[,-1]
+test2=test[, -2]
+
+
+```
+
+# Altman Ohlson
+
+## Altman Only
+
+```{r}
+
+library(xgboost) #for fitting the xgboost model
+library(randomForest)
+library(caret)
+library(party)
+
+xgbtrain_x=data.matrix(train1[,-c(1:55,60:69)])
+xgbtrain_y=train1[,1]
+
+xgbtest_x=data.matrix(test1[,-c(1:55,60:69)])
+xgbtest_y=test1[,1]
+
+xgbtrain=xgb.DMatrix(xgbtrain_x,label=xgbtrain_y)
+
+xgbtest=xgb.DMatrix(xgbtest_x,label=xgbtest_y)
+
+watchlist = list(train=xgbtrain, test=xgbtest)
+model = xgb.train(data = xgbtrain, max.depth = 3, watchlist=watchlist, nrounds = 70)
+
+importance_matrix <- xgb.importance(colnames(train1[,56:59]), model =model)
+
+mypred4=as.factor(round(predict(model,xgbtest),0))
+confusionMatrix(table(mypred4,test1$Bankrupt), positive='1')
+
+xgb.ggplot.importance(importance_matrix)
+
+
+```
+
+## Ohlson Only
+
+```{r}
+
+library(xgboost) #for fitting the xgboost model
+library(randomForest)
+library(caret)
+library(party)
+
+xgbtrain_x=data.matrix(train1[,-c(1:60, 69)])
+xgbtrain_y=train1[,1]
+
+xgbtest_x=data.matrix(test1[,-c(1:60, 69)])
+xgbtest_y=test1[,1]
+
+xgbtrain=xgb.DMatrix(xgbtrain_x,label=xgbtrain_y)
+
+xgbtest=xgb.DMatrix(xgbtest_x,label=xgbtest_y)
+
+watchlist = list(train=xgbtrain, test=xgbtest)
+model = xgb.train(data = xgbtrain, max.depth = 3, watchlist=watchlist, nrounds = 70)
+
+importance_matrix <- xgb.importance(colnames(train1[,61:68]), model =model)
+
+mypred4=as.factor(round(predict(model,xgbtest),0))
+confusionMatrix(table(mypred4,test1$Bankrupt), positive='1')
+
+xgb.ggplot.importance(importance_matrix)
+
+
+```
+
+## XG Boost
+
+```{r}
+
+
+xgbtrain_x=data.matrix(train1[,-1])
+xgbtrain_y=train1[,1]
+
+xgbtest_x=data.matrix(test1[,-1])
+xgbtest_y=test1[,1]
+
+xgbtrain=xgb.DMatrix(xgbtrain_x,label=xgbtrain_y)
+
+xgbtest=xgb.DMatrix(xgbtest_x,label=xgbtest_y)
+
+watchlist = list(train=xgbtrain, test=xgbtest)
+model = xgb.train(data = xgbtrain, max.depth = 150, watchlist=watchlist, nrounds = 70)
+
+importance_matrix <- xgb.importance(colnames(train1[,-1]), model =model)
+
+mypred4=as.factor(round(predict(model,xgbtest),0))
+confusionMatrix(table(mypred4,test1$Bankrupt), positive='1')
+
+xgb.ggplot.importance(importance_matrix, top_n=15)
+
+```
+
+
+
+
+#
